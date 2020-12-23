@@ -196,7 +196,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
         logout()
         throw new Error(token.error_description)
       }
-      setupUserFromToken(token)
+      await setupUserFromToken(token)
       return token
     }
     return currentToken
