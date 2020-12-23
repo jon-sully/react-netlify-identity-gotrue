@@ -14,6 +14,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
   useEffect(() => {
     if (persistedToken) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedToken))
+      console.log(`effect; persistedToken: ${JSON.stringify(persistedToken)}`)
       refreshToken()
     }
   }, [persistedToken])
@@ -174,6 +175,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
 
   // Refresh JWT if server won't ratify it anymore (expired)
   const refreshToken = async (force = false) => {
+    console.log(`function; persistedToken: ${JSON.stringify(persistedToken)}`)
     if (!persistedToken) throw new Error('Cannot refresh token when not logged in')
 
     const now = new Date()
