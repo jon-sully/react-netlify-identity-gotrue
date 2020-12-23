@@ -5,35 +5,26 @@ const STORAGE_KEY = 'nid.token'
 
 const useNetlifyIdentity = ({ url: _url }) => {
   const [persistedToken, setPersistedToken] = useState()
-  const [tokenExpiration, setTokenExpiration] = useState()
   const [provisionalUser, setProvisionalUser] = useState()
   const [urlToken, setUrlToken] = useState()
   const url = `${_url}/.netlify/identity`
 
-  // Make sure token in LocalStorage is always up to date and tokenExpiration
-  // state is always correct
+  // Make sure token in LocalStorage is always up to date and refreshes the
+  // authorization on page load
   useEffect(() => {
     if (persistedToken) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedToken))
-      setTokenExpiration(
-        new Date(
-          JSON.parse(
-            urlBase64Decode(persistedToken.token.access_token.split('.')[1])
-          ).exp * 1000
-        )
-      )
+      refreshToken()
     }
   }, [persistedToken])
-
-  // Keep the token fresh if expired
-  useEffect(() => {
-    tokenExpiration && refreshToken()
-  }, [tokenExpiration])
 
   // Loads Token from LocalStorage; only run once
   useEffect(() => {
     const persistedToken = localStorage.getItem(STORAGE_KEY)
-    persistedToken && setPersistedToken(JSON.parse(persistedToken)) && setProvisionalUser()
+    if (persistedToken) {
+      setPersistedToken(JSON.parse(persistedToken))
+      setProvisionalUser()
+    }
   }, [])
 
   // Grab the urlToken from location if exists
@@ -56,7 +47,14 @@ const useNetlifyIdentity = ({ url: _url }) => {
             })
           })
             .then(resp => resp.json())
-            .then(setupUserFromToken)
+            .then(token => {
+              // Confirmation email clicked second time+
+              if (token.code === "404") {
+                logout()
+                throw new Error('Confirmation already used')
+              }
+              setupUserFromToken(token)
+            })
             .then(() => {
               setUrlToken()
             })
@@ -121,7 +119,6 @@ const useNetlifyIdentity = ({ url: _url }) => {
   const logout = async () => {
     localStorage.removeItem(STORAGE_KEY)
     setPersistedToken()
-    setTokenExpiration()
   }
 
   // API: Log in user
@@ -177,10 +174,17 @@ const useNetlifyIdentity = ({ url: _url }) => {
 
   // Refresh JWT if server won't ratify it anymore (expired)
   const refreshToken = async (force = false) => {
+    if (!persistedToken) throw new Error('Cannot refresh token when not logged in')
+
     const now = new Date()
-    if (force || (tokenExpiration && now > tokenExpiration)) {
+    const tokenExpiresAt = new Date(persistedToken.token.expires_at)
+
+    if (force || (tokenExpiresAt && now > tokenExpiresAt)) {
       const token = await getTokenByRefresh({ refreshToken: persistedToken.token.refresh_token }).then(resp => resp.json())
       if (token?.error_description) {
+        // Any error refreshing the token will mean the local token is stale and
+        // won't work for Functions etc. - better to just log user out and re-auth
+        logout()
         throw new Error(token.error_description)
       }
       setupUserFromToken(token)
@@ -192,8 +196,6 @@ const useNetlifyIdentity = ({ url: _url }) => {
   const getToken = async ({ email, password }) => {
     const token = await getTokenByEmailAndPassword({ email, password }).then(resp => resp.json())
     if (token?.error_description) {
-      // If there's an error refreshing the token, just bail on the persistence
-      logout()
       throw new Error(token.error_description)
     }
     setupUserFromToken(token)
@@ -202,8 +204,9 @@ const useNetlifyIdentity = ({ url: _url }) => {
   // Converts the {access_token, refresh_token} response into the in-memory
   // combination of that _and_ the /user definition 
   const setupUserFromToken = async (token) => {
+    const expiration = new Date(JSON.parse(urlBase64Decode(token.access_token.split('.')[1])).exp * 1000)
     const user = await authorizedFetch(`${url}/user`, {}, token).then(resp => resp.json())
-    setPersistedToken({ token, ...user })
+    setPersistedToken({ token: { ...token, expires_at: expiration.getTime() }, ...user })
   }
 
   const getTokenByEmailAndPassword = async ({ email, password }) => {
