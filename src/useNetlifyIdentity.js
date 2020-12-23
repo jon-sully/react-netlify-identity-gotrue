@@ -167,7 +167,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
     console.log(`Beginning Authorized Fetch for ${url}`)
 
     // TODO: TESTING - change back to false after validating that this sequence works correctly
-    return refreshToken(false, token)
+    return refreshToken(true, token)
       .then((token) => {
         console.log(`Authorized Fetch fetching target: ${url}`)
         fetch(url, {
