@@ -1,0 +1,45 @@
+{
+  "name": "react-netlify-identity-gotrue",
+  "version": "0.0.1",
+  "description": "A pure React (hooks-based) API to Netlify Identity / GoTrue, fully implementing all auth workflows",
+  "main": "./build/index.js",
+  "repository": "https://github.com/jon-sully/react-netlify-identity-gotrue",
+  "author": "@jon-sully",
+  "license": "MIT",
+  "private": false,
+  "babel": {
+    "presets": [
+      "@babel/preset-react"
+    ]
+  },
+  "scripts": {
+    "prepare": "webpack"
+  },
+  "peerDependencies": {
+    "react": "^16.13.1",
+    "react-dom": "^16.13.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.7.5",
+    "@babel/plugin-proposal-optional-chaining": "^7.12.7",
+    "@babel/preset-react": "^7.7.4",
+    "babel-loader": "^8.0.6",
+    "react": "^16.13.1",
+    "webpack": "^4.41.2",
+    "webpack-cli": "^3.3.10"
+  },
+  "keywords": [
+    "react",
+    "netlify",
+    "hooks",
+    "identity",
+    "auth",
+    "next",
+    "gatsby",
+    "gotrue"
+  ],
+  "bugs": {
+    "url": "https://github.com/jon-sully/react-netlify-identity-gotrue/issues",
+    "email": "hey@jonsully.net"
+  }
+}
