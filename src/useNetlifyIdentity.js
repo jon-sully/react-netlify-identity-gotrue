@@ -164,8 +164,15 @@ const useNetlifyIdentity = ({ url: _url }) => {
   const authorizedFetch = async (url, options, token = persistedToken?.token) => {
     if (!token) throw new Error('No user set for authorized fetch')
 
-    const updatedToken = await refreshToken(false, token)
-    return fetch(url, { headers: { 'Authorization': `Bearer ${updatedToken || token.access_token}` }, ...options })
+    // TODO: TESTING - change back to false after validating that this sequence works correctly
+    return refreshToken(false, token)
+      .then((token) => fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          'Authorization': `Bearer ${token.access_token}`
+        },
+      }))
   }
 
   // API: A forced data refresh for if the User changes externally (from Function
@@ -192,6 +199,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
       setupUserFromToken(token)
       return token
     }
+    return currentToken
   }
 
   // Get token from login 
