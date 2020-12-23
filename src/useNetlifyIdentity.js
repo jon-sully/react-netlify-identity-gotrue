@@ -207,7 +207,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
   // combination of that _and_ the /user definition while also adding expires_at
   // to the {access_token, refresh_token} bit
   const setupUserFromToken = async (_token) => {
-    const expiration = new Date(JSON.parse(urlBase64Decode(token.access_token.split('.')[1])).exp * 1000)
+    const expiration = new Date(JSON.parse(urlBase64Decode(_token.access_token.split('.')[1])).exp * 1000)
     const token = { ..._token, expires_at: expiration.getTime() }
     const user = await authorizedFetch(`${url}/user`, {}, token).then(resp => resp.json())
     setPersistedToken({ token, ...user })
