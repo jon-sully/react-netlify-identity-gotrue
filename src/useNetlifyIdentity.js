@@ -164,20 +164,14 @@ const useNetlifyIdentity = ({ url: _url }) => {
   const authorizedFetch = async (url, options, token = persistedToken?.token) => {
     if (!token) throw new Error('No user set for authorized fetch')
 
-    console.log(`Beginning Authorized Fetch for ${url}`)
-
-    // TODO: TESTING - change back to false after validating that this sequence works correctly
-    return refreshToken(true, token)
-      .then((token) => {
-        console.log(`Authorized Fetch fetching target: ${url}`)
-        fetch(url, {
-          ...options,
-          headers: {
-            ...options.headers,
-            'Authorization': `Bearer ${token.access_token}`
-          },
-        })
-      })
+    return refreshToken(false, token)
+      .then((token) => fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          'Authorization': `Bearer ${token.access_token}`
+        },
+      }))
   }
 
   // API: A forced data refresh for if the User changes externally (from Function
@@ -189,8 +183,6 @@ const useNetlifyIdentity = ({ url: _url }) => {
   // Refresh JWT if server won't ratify it anymore (expired)
   const refreshToken = async (force = false, currentToken = persistedToken?.token) => {
     if (!currentToken) throw new Error('Cannot refresh token when not logged in')
-
-    console.log('Beginning refresh token')
 
     const now = new Date()
     const tokenExpiresAt = new Date(currentToken.expires_at)
@@ -204,10 +196,8 @@ const useNetlifyIdentity = ({ url: _url }) => {
         throw new Error(token.error_description)
       }
       await setupUserFromToken(token)
-      console.log('returning new token')
       return token
     }
-    console.log('returning currentToken')
     return currentToken
   }
 
@@ -224,11 +214,9 @@ const useNetlifyIdentity = ({ url: _url }) => {
   // combination of that _and_ the /user definition while also adding expires_at
   // to the {access_token, refresh_token} bit
   const setupUserFromToken = async (_token) => {
-    console.log('Beginning setupUserFromToken')
     const expiration = new Date(JSON.parse(urlBase64Decode(_token.access_token.split('.')[1])).exp * 1000)
     const token = { ..._token, expires_at: expiration.getTime() }
     const user = await authorizedFetch(`${url}/user`, {}, token).then(resp => resp.json())
-    console.log('setupUserFromToken setting state')
     setPersistedToken({ token, ...user })
   }
 
