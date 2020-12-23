@@ -14,7 +14,6 @@ const useNetlifyIdentity = ({ url: _url }) => {
   useEffect(() => {
     if (persistedToken) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedToken))
-      console.log(`effect; persistedToken: ${JSON.stringify(persistedToken)}`)
       refreshToken()
     }
   }, [persistedToken])
@@ -162,8 +161,10 @@ const useNetlifyIdentity = ({ url: _url }) => {
   }
 
   // API: Fetch wrapper that always ensures a fresh token (for Auth'd Functions usage)
-  const authorizedFetch = async (url, options, token = persistedToken.token) => {
-    const updatedToken = await refreshToken()
+  const authorizedFetch = async (url, options, token = persistedToken?.token) => {
+    if (!token) throw new Error('No user set for authorized fetch')
+
+    const updatedToken = await refreshToken(false, token)
     return fetch(url, { headers: { 'Authorization': `Bearer ${updatedToken || token.access_token}` }, ...options })
   }
 
@@ -174,15 +175,14 @@ const useNetlifyIdentity = ({ url: _url }) => {
   }
 
   // Refresh JWT if server won't ratify it anymore (expired)
-  const refreshToken = async (force = false) => {
-    console.log(`function; persistedToken: ${JSON.stringify(persistedToken)}`)
-    if (!persistedToken) throw new Error('Cannot refresh token when not logged in')
+  const refreshToken = async (force = false, currentToken = persistedToken?.token) => {
+    if (!currentToken) throw new Error('Cannot refresh token when not logged in')
 
     const now = new Date()
-    const tokenExpiresAt = new Date(persistedToken.token.expires_at)
+    const tokenExpiresAt = new Date(currentToken.expires_at)
 
     if (force || (tokenExpiresAt && now > tokenExpiresAt)) {
-      const token = await getTokenByRefresh({ refreshToken: persistedToken.token.refresh_token }).then(resp => resp.json())
+      const token = await getTokenByRefresh({ refreshToken: currentToken.refresh_token }).then(resp => resp.json())
       if (token?.error_description) {
         // Any error refreshing the token will mean the local token is stale and
         // won't work for Functions etc. - better to just log user out and re-auth
@@ -204,11 +204,13 @@ const useNetlifyIdentity = ({ url: _url }) => {
   }
 
   // Converts the {access_token, refresh_token} response into the in-memory
-  // combination of that _and_ the /user definition 
-  const setupUserFromToken = async (token) => {
+  // combination of that _and_ the /user definition while also adding expires_at
+  // to the {access_token, refresh_token} bit
+  const setupUserFromToken = async (_token) => {
     const expiration = new Date(JSON.parse(urlBase64Decode(token.access_token.split('.')[1])).exp * 1000)
+    const token = { ..._token, expires_at: expiration.getTime() }
     const user = await authorizedFetch(`${url}/user`, {}, token).then(resp => resp.json())
-    setPersistedToken({ token: { ...token, expires_at: expiration.getTime() }, ...user })
+    setPersistedToken({ token, ...user })
   }
 
   const getTokenByEmailAndPassword = async ({ email, password }) => {
