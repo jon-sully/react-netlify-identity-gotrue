@@ -12,38 +12,56 @@ const useNetlifyIdentity = ({ url: _url }) => {
   const [urlToken, setUrlToken] = useState()
   const url = useMemo(() => `${_url}/.netlify/identity`, [_url])
 
+  // Coerces the user half of identityData
+  const setUser = useCallback(user => {
+    setIdentityData((prevIdentityData) => {
+      return {
+        token: prevIdentityData?.token,
+        user: user
+      }
+    })
+  }, [])
+
+  // Define async token refresh procedure
+  const refreshToken = useCallback(async (andUser) => {
+    if (!identityData) throw new Error('Cannot refresh token when not logged in')
+
+    const now = new Date()
+    const tokenExpiresAt = new Date(identityData.token.expires_at)
+
+    // Refresh the token if it expires within four minutes or if we're forcing
+    // the user refresh (since the user inside the token.JWT would be new too)
+    if (andUser || (now > (tokenExpiresAt - FOUR_MINUTES))) {
+      console.log('Refreshing Auth Token')
+      const token = await fetch(`${url}/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: `grant_type=refresh_token&refresh_token=${identityData.token.refresh_token}`,
+      }).then(resp => resp.json())
+      if (token?.error_description) {
+        // Any error refreshing the token will mean the local token is stale and
+        // won't work for Functions etc. - better to just log user out and re-auth
+        logout()
+        throw new Error(token.error_description)
+      }
+      setToken(token)
+    }
+
+    // If refreshing the user (above will have run) use the new token to get the
+    // new user details too. Using setPendingUpdate to a fake / random hash since
+    // goTrue will return the user object for _any_ update, even if nothing is
+    // updated. Could just setUser(); that would also update the in-memory user,
+    // but flashes an empty user object to the screen which is ugly.
+    if (andUser) setPendingUpdate({ a: '' })
+  }, [identityData, url])
+
   // Any time the identityData changes, make sure it gets cloned down to
   // localStorage and setup refreshToken polling
   useEffect(() => {
     if (identityData) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(identityData))
-
-      // Define async token refresh procedure
-      const refreshToken = async () => {
-        if (!identityData) throw new Error('Cannot refresh token when not logged in')
-
-        const now = new Date()
-        const tokenExpiresAt = new Date(identityData.token.expires_at)
-
-        // Refresh the token if it expires within four minutes
-        if (now > (tokenExpiresAt - FOUR_MINUTES)) {
-          console.log('Refreshing Auth Token')
-          const token = await fetch(`${url}/token`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: `grant_type=refresh_token&refresh_token=${identityData.token.refresh_token}`,
-          }).then(resp => resp.json())
-          if (token?.error_description) {
-            // Any error refreshing the token will mean the local token is stale and
-            // won't work for Functions etc. - better to just log user out and re-auth
-            logout()
-            throw new Error(token.error_description)
-          }
-          setToken(token)
-        }
-      }
 
       // Configure automatic token refreshing - run refreshToken() every minute
       refreshToken()
@@ -52,7 +70,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
         clearInterval(interval)
       }
     }
-  }, [identityData, url])
+  }, [identityData, url, refreshToken])
 
   // Loads identityData from LocalStorage on page load
   useEffect(() => {
@@ -194,16 +212,8 @@ const useNetlifyIdentity = ({ url: _url }) => {
     })
       .then(resp => resp.json())
 
-    setIdentityData(prevIdentityData => {
-      return {
-        token: prevIdentityData?.token,
-        user: {
-          ...prevIdentityData?.user,
-          ...user
-        }
-      }
-    })
-  }, [url, authorizedFetch])
+    setUser(user)
+  }, [url, authorizedFetch, setUser])
 
   // Async update - mostly applies for the invite-token workflow when saving
   // more data on a new account than just the password
@@ -226,18 +236,18 @@ const useNetlifyIdentity = ({ url: _url }) => {
   // API: A forced data refresh for if the User changes externally (from Function
   // or otherwise)
   const refreshUser = useCallback(async () => {
-    return authorizedFetch(`${url}/user`)
-      .then(resp => resp.json())
-      .then(user => setUser(user))
-  }, [url, authorizedFetch])
+    refreshToken(true)
+  }, [refreshToken])
 
   // When logging in all we set is the token; if there's no identityData.user,
   // this effect should go grab it
   useEffect(() => {
     if (identityData?.token && !identityData?.user) {
-      refreshUser()
+      authorizedFetch(`${url}/user`)
+        .then(resp => resp.json())
+        .then(user => setUser(user))
     }
-  }, [identityData, refreshUser])
+  }, [url, identityData, authorizedFetch, setUser])
 
   // API: Requests a password recovery email for the specified email-user
   const sendPasswordRecovery = async ({ email }) => {
@@ -261,18 +271,6 @@ const useNetlifyIdentity = ({ url: _url }) => {
     })
   }
 
-  // Coerces the user half of identityData
-  const setUser = (user) => {
-    setIdentityData((prevIdentityData) => {
-      return {
-        token: prevIdentityData?.token,
-        user: {
-          ...prevIdentityData?.user,
-          ...user
-        }
-      }
-    })
-  }
 
   return {
     login,
