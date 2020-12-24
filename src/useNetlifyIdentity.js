@@ -2,9 +2,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { parseTokenFromLocation } from './parseTokenFromLocation'
 
 const STORAGE_KEY = 'identityData'
-// const TOKEN_REFRESH_INTERVAL = 20_000
-const TWENTY_MINUTES = 1000 * 30 // milli * sec * min
-const THREE_MINUTES = 1000 * 60 * 3 //milliseconds * sec * min
+const FOUR_MINUTES = 1000 * 60 * 4 // milli * sec * min
+const ONE_MINUTE = 1000 * 60 * 1 //milliseconds * sec * min
 
 const useNetlifyIdentity = ({ url: _url }) => {
   const [identityData, setIdentityData] = useState()
@@ -26,8 +25,8 @@ const useNetlifyIdentity = ({ url: _url }) => {
         const now = new Date()
         const tokenExpiresAt = new Date(identityData.token.expires_at)
 
-        // Refresh the token if it expires within twenty minutes
-        if (now > (tokenExpiresAt - TWENTY_MINUTES)) {
+        // Refresh the token if it expires within four minutes
+        if (now > (tokenExpiresAt - FOUR_MINUTES)) {
           console.log('Refreshing Auth Token')
           const token = await fetch(`${url}/token`, {
             method: 'POST',
@@ -46,9 +45,9 @@ const useNetlifyIdentity = ({ url: _url }) => {
         }
       }
 
-      // Configure automatic token refreshing - run refreshToken every 5 minutes
+      // Configure automatic token refreshing - run refreshToken() every minute
       refreshToken()
-      const interval = setInterval(() => refreshToken(), THREE_MINUTES)
+      const interval = setInterval(() => refreshToken(), ONE_MINUTE)
       return () => {
         clearInterval(interval)
       }
