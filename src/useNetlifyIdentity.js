@@ -1,28 +1,65 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { parseTokenFromLocation } from './parseTokenFromLocation'
 
-const STORAGE_KEY = 'nid.token'
+const STORAGE_KEY = 'identityData'
+// const TOKEN_REFRESH_INTERVAL = 20_000
+const TWENTY_MINUTES = 1000 * 30 // milli * sec * min
+const THREE_MINUTES = 1000 * 60 * 3 //milliseconds * sec * min
 
 const useNetlifyIdentity = ({ url: _url }) => {
-  const [persistedToken, setPersistedToken] = useState()
+  const [identityData, setIdentityData] = useState()
   const [provisionalUser, setProvisionalUser] = useState()
+  const [pendingUpdate, setPendingUpdate] = useState()
   const [urlToken, setUrlToken] = useState()
-  const url = `${_url}/.netlify/identity`
+  const url = useMemo(() => `${_url}/.netlify/identity`, [_url])
 
-  // Make sure token in LocalStorage is always up to date and refreshes the
-  // authorization on page load
+  // Any time the identityData changes, make sure it gets cloned down to
+  // localStorage and setup refreshToken polling
   useEffect(() => {
-    if (persistedToken) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedToken))
+    if (identityData) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(identityData))
+
+      // Define async token refresh procedure
+      const refreshToken = async () => {
+        if (!identityData) throw new Error('Cannot refresh token when not logged in')
+
+        const now = new Date()
+        const tokenExpiresAt = new Date(identityData.token.expires_at)
+
+        // Refresh the token if it expires within twenty minutes
+        if (now > (tokenExpiresAt - TWENTY_MINUTES)) {
+          console.log('Refreshing Auth Token')
+          const token = await fetch(`${url}/token`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: `grant_type=refresh_token&refresh_token=${identityData.token.refresh_token}`,
+          }).then(resp => resp.json())
+          if (token?.error_description) {
+            // Any error refreshing the token will mean the local token is stale and
+            // won't work for Functions etc. - better to just log user out and re-auth
+            logout()
+            throw new Error(token.error_description)
+          }
+          setToken(token)
+        }
+      }
+
+      // Configure automatic token refreshing - run refreshToken every 5 minutes
       refreshToken()
+      const interval = setInterval(() => refreshToken(), THREE_MINUTES)
+      return () => {
+        clearInterval(interval)
+      }
     }
-  }, [persistedToken])
+  }, [identityData, url])
 
-  // Loads Token from LocalStorage; only run once
+  // Loads identityData from LocalStorage on page load
   useEffect(() => {
-    const persistedToken = localStorage.getItem(STORAGE_KEY)
-    if (persistedToken) {
-      setPersistedToken(JSON.parse(persistedToken))
+    const identityData = localStorage.getItem(STORAGE_KEY)
+    if (identityData) {
+      setIdentityData(JSON.parse(identityData))
       setProvisionalUser()
     }
   }, [])
@@ -32,7 +69,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
     setUrlToken(parseTokenFromLocation())
   }, [])
 
-  // Token-dependent only
+  // urlToken-dependent only
   useEffect(() => {
     if (urlToken) {
       switch (urlToken.type) {
@@ -53,7 +90,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
                 logout()
                 throw new Error('Confirmation already used')
               }
-              setupUserFromToken(token)
+              setToken(token)
             })
             .then(() => {
               setUrlToken()
@@ -69,7 +106,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
             })
           })
             .then(resp => resp.json())
-            .then(setupUserFromToken)
+            .then(setToken)
           // Explicitly not setting the urlToken to null so that a password
           // reset can occur (this just logs the user in first)
           break
@@ -78,16 +115,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
       }
     }
 
-  }, [urlToken])
-
-  // Token and User dependent since user needs to be logged in to run email_change
-  useEffect(() => {
-    if (urlToken && urlToken.type === 'email_change' && persistedToken) {
-      console.log('Confirming Email Change')
-      update({ email_change_token: urlToken.token })
-        .then(() => setUrlToken())
-    }
-  }, [urlToken, persistedToken])
+  }, [urlToken, url])
 
   // API: The handler for urlTokens which require the user to set a password in
   // addition to the urlToken
@@ -108,22 +136,45 @@ const useNetlifyIdentity = ({ url: _url }) => {
           password,
         })
       }).then(resp => resp.json())
-      await setupUserFromToken(token)
-      // Subsequent update covers the rest of the fields (name, etc.)
-      await _update({ data: rest }, token)
+      setToken(token)
+      setPendingUpdate({ data: rest })
       setUrlToken()
     }
   }
 
+  // API: Thin fetch wrapper for Authenticated Functions
+  const authorizedFetch = useCallback(async (url, options) => {
+    if (!identityData) throw new Error('No user set for authorized fetch')
+
+    // return refreshToken(false, token)
+    return fetch(url, {
+      ...options,
+      headers: {
+        ...options?.headers,
+        'Authorization': `Bearer ${identityData.token.access_token}`
+      },
+    })
+  }, [identityData])
+
   // API: Log out current user
   const logout = async () => {
     localStorage.removeItem(STORAGE_KEY)
-    setPersistedToken()
+    setIdentityData()
   }
 
   // API: Log in user
   const login = async ({ email, password }) => {
-    await getToken({ email, password })
+    const token = await fetch(`${url}/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: `grant_type=password&username=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`
+    }).then(resp => resp.json())
+    if (token?.error_description) {
+      throw new Error(token.error_description)
+    }
+    setToken(token)
   }
 
   // API: Sign up as a new user - email, password, data: { full_name: }, etc.
@@ -137,20 +188,57 @@ const useNetlifyIdentity = ({ url: _url }) => {
   }
 
   // API: Update user info - update({ email, password, data: { full_name: } }), etc.
-  const update = async (props) => {
-    await _update(props)
-  }
-
-  // Not for public API; allows manual access_token specification
-  const _update = async (props, token) => {
+  const update = useCallback(async (props) => {
     const user = await authorizedFetch(`${url}/user`, {
       method: 'PUT',
       body: JSON.stringify(props)
-    }, token)
+    })
       .then(resp => resp.json())
 
-    setPersistedToken({ token, ...persistedToken, ...user })
-  }
+    setIdentityData(prevIdentityData => {
+      return {
+        token: prevIdentityData?.token,
+        user: {
+          ...prevIdentityData?.user,
+          ...user
+        }
+      }
+    })
+  }, [url, authorizedFetch])
+
+  // Async update - mostly applies for the invite-token workflow when saving
+  // more data on a new account than just the password
+  useEffect(() => {
+    if (identityData?.token && identityData?.user && pendingUpdate) {
+      update(pendingUpdate)
+      setPendingUpdate()
+    }
+  }, [identityData, pendingUpdate, update])
+
+  // Token and User dependent since user needs to be logged in to run email_change
+  useEffect(() => {
+    if (urlToken && urlToken.type === 'email_change' && identityData) {
+      console.log('Confirming Email Change')
+      update({ email_change_token: urlToken.token })
+        .then(() => setUrlToken())
+    }
+  }, [urlToken, identityData, update])
+
+  // API: A forced data refresh for if the User changes externally (from Function
+  // or otherwise)
+  const refreshUser = useCallback(async () => {
+    return authorizedFetch(`${url}/user`)
+      .then(resp => resp.json())
+      .then(user => setUser(user))
+  }, [url, authorizedFetch])
+
+  // When logging in all we set is the token; if there's no identityData.user,
+  // this effect should go grab it
+  useEffect(() => {
+    if (identityData?.token && !identityData?.user) {
+      refreshUser()
+    }
+  }, [identityData, refreshUser])
 
   // API: Requests a password recovery email for the specified email-user
   const sendPasswordRecovery = async ({ email }) => {
@@ -160,83 +248,30 @@ const useNetlifyIdentity = ({ url: _url }) => {
     })
   }
 
-  // API: Fetch wrapper that always ensures a fresh token (for Auth'd Functions usage)
-  const authorizedFetch = async (url, options, token = persistedToken?.token) => {
-    if (!token) throw new Error('No user set for authorized fetch')
-
-    return refreshToken(false, token)
-      .then((token) => fetch(url, {
-        ...options,
-        headers: {
-          ...options.headers,
-          'Authorization': `Bearer ${token.access_token}`
-        },
-      }))
-  }
-
-  // API: A forced data refresh for if the User changes externally (from Function
-  // or otherwise)
-  const refreshUser = async () => {
-    await refreshToken(true)
-  }
-
-  // Refresh JWT if server won't ratify it anymore (expired)
-  const refreshToken = async (force = false, currentToken = persistedToken?.token) => {
-    if (!currentToken) throw new Error('Cannot refresh token when not logged in')
-
-    const now = new Date()
-    const tokenExpiresAt = new Date(currentToken.expires_at)
-
-    if (force || (tokenExpiresAt && now > tokenExpiresAt)) {
-      const token = await getTokenByRefresh({ refreshToken: currentToken.refresh_token }).then(resp => resp.json())
-      if (token?.error_description) {
-        // Any error refreshing the token will mean the local token is stale and
-        // won't work for Functions etc. - better to just log user out and re-auth
-        logout()
-        throw new Error(token.error_description)
+  // Coerces the token half of identityData (and adds expires_at)
+  const setToken = (token) => {
+    const expires_at = new Date(JSON.parse(urlBase64Decode(token.access_token.split('.')[1])).exp * 1000)
+    setIdentityData((prevIdentityData) => {
+      return {
+        user: prevIdentityData?.user,
+        token: {
+          ...token,
+          expires_at
+        }
       }
-      await setupUserFromToken(token)
-      return token
-    }
-    return currentToken
-  }
-
-  // Get token from login 
-  const getToken = async ({ email, password }) => {
-    const token = await getTokenByEmailAndPassword({ email, password }).then(resp => resp.json())
-    if (token?.error_description) {
-      throw new Error(token.error_description)
-    }
-    setupUserFromToken(token)
-  }
-
-  // Converts the {access_token, refresh_token} response into the in-memory
-  // combination of that _and_ the /user definition while also adding expires_at
-  // to the {access_token, refresh_token} bit
-  const setupUserFromToken = async (_token) => {
-    const expiration = new Date(JSON.parse(urlBase64Decode(_token.access_token.split('.')[1])).exp * 1000)
-    const token = { ..._token, expires_at: expiration.getTime() }
-    const user = await authorizedFetch(`${url}/user`, {}, token).then(resp => resp.json())
-    setPersistedToken({ token, ...user })
-  }
-
-  const getTokenByEmailAndPassword = async ({ email, password }) => {
-    return fetch(`${url}/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: `grant_type=password&username=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`
     })
   }
 
-  const getTokenByRefresh = async ({ refreshToken }) => {
-    return fetch(`${url}/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: `grant_type=refresh_token&refresh_token=${refreshToken}`,
+  // Coerces the user half of identityData
+  const setUser = (user) => {
+    setIdentityData((prevIdentityData) => {
+      return {
+        token: prevIdentityData?.token,
+        user: {
+          ...prevIdentityData?.user,
+          ...user
+        }
+      }
     })
   }
 
@@ -247,10 +282,9 @@ const useNetlifyIdentity = ({ url: _url }) => {
     signup,
     urlToken,
     refreshUser,
-    persistedToken,
     authorizedFetch,
     provisionalUser,
-    user: persistedToken,
+    user: identityData?.user,
     sendPasswordRecovery,
     completeUrlTokenTwoStep,
   }
