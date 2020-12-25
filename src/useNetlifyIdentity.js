@@ -5,6 +5,7 @@ const GO_TRUE_TOKEN_STORAGE_KEY = 'ni.goTrueToken'
 const USER_STORAGE_KEY = 'ni.user'
 const FOUR_MINUTES = 1000 * 60 * 4
 
+// Api docs to come
 const useNetlifyIdentity = ({ url: _url }) => {
 
   // Contains the user details section of things
@@ -62,7 +63,6 @@ const useNetlifyIdentity = ({ url: _url }) => {
   // STUB - Exclusively refreshes the goTrueToken (doesn't touch user) -- 
   // doesn't check any expirations or anything, just goes ahead and refreshes
   const refreshGoTrueToken = useCallback(async () => {
-    console.log('Refreshing Auth Token')
     setGoTrueToken(await fetch(`${url}/token`, {
       method: 'POST',
       headers: {
@@ -297,14 +297,15 @@ const useNetlifyIdentity = ({ url: _url }) => {
 function urlBase64Decode(str) {
   // From https://jwt.io/js/jwt.js
   var output = str.replace(/-/g, '+').replace(/_/g, '/');
+  let cleaned
   switch (output.length % 4) {
     case 0:
-      break;
+      cleaned = output
     case 2:
-      output += '==';
+      cleaned = `${output}==`
       break;
     case 3:
-      output += '=';
+      cleaned = `${output}=`
       break;
     default:
       throw new Error('Illegal base64url string!')
