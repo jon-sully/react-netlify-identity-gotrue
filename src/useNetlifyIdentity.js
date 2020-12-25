@@ -175,8 +175,8 @@ const useNetlifyIdentity = ({ url: _url }) => {
   const completeUrlTokenTwoStep = async ({ password, ...rest }) => {
     if (urlToken?.type === 'recovery') {
       console.log('Updating Password & Clearing URL Token')
-      update({ password })
-        .then(() => setUrlToken())
+      setPendingUpdateArgs({ password })
+      setUrlToken()
     }
     else if (urlToken?.type === 'invite') {
       console.log('Setting Up Invited User')
@@ -239,8 +239,8 @@ const useNetlifyIdentity = ({ url: _url }) => {
   // more data on a new account than just the password
   useEffect(() => {
     if (goTrueToken && user && pendingUpdateArgs) {
-      update(pendingUpdateArgs)
       setPendingUpdateArgs()
+      update(pendingUpdateArgs)
     }
   }, [goTrueToken, user, pendingUpdateArgs, update])
 
@@ -248,8 +248,8 @@ const useNetlifyIdentity = ({ url: _url }) => {
   useEffect(() => {
     if (urlToken && urlToken.type === 'email_change' && user) {
       console.log('Confirming Email Change')
-      update({ email_change_token: urlToken.token })
-        .then(() => setUrlToken())
+      setPendingUpdateArgs({ email_change_token: urlToken.token })
+      setUrlToken()
     }
   }, [urlToken, user, update])
 
@@ -310,7 +310,7 @@ function urlBase64Decode(str) {
     default:
       throw new Error('Illegal base64url string!')
   }
-  var result = window.atob(output); //polifyll https://github.com/davidchambers/Base64.js
+  var result = window.atob(cleaned); //polifyll https://github.com/davidchambers/Base64.js
   try {
     return decodeURIComponent(escape(result));
   } catch (err) {
