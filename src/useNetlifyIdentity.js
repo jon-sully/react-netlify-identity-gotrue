@@ -1,82 +1,118 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { parseTokenFromLocation } from './parseTokenFromLocation'
 
-const STORAGE_KEY = 'identityData'
-const FOUR_MINUTES = 1000 * 60 * 4 // milli * sec * min
-const ONE_MINUTE = 1000 * 60 * 1 //milliseconds * sec * min
+const GO_TRUE_TOKEN_STORAGE_KEY = 'ni.goTrueToken'
+const USER_STORAGE_KEY = 'ni.user'
+const FOUR_MINUTES = 1000 * 60 * 4
 
 const useNetlifyIdentity = ({ url: _url }) => {
-  const [identityData, setIdentityData] = useState()
-  const [provisionalUser, setProvisionalUser] = useState()
-  const [pendingUpdate, setPendingUpdate] = useState()
+
+  // Contains the user details section of things
+  const [user, setUser] = useState()
+
+  // Contains the actual GoTrue token { access_token:, refresh_token:, expires_at: }
+  const [goTrueToken, _setGoTrueToken] = useState()
+
+  // Contains the netlify email-token after it's snagged from the URL path hash
   const [urlToken, setUrlToken] = useState()
+
+  // Contains arguments to send an update to the user info with (for two-step invite flow)
+  const [pendingUpdateArgs, setPendingUpdateArgs] = useState()
+
+  // Contains the information for the user (not persisted) - they need to confirm email
+  const [provisionalUser, setProvisionalUser] = useState()
+
+  // Contains the ID of the timeout set to refresh the goTrueToken so that we can
+  // prevent race conditions between updates (which refresh the token) and timer-
+  // based refreshes. Yay!
+  const [goTrueTokenRefreshTimeoutId, setGoTrueTokenRefreshTimeoutId] = useState()
+
+  // A flag for refreshing the goTrueToken - it's only used following an .update(), which
+  // sets the user, so there's no need to set the user too 
+  const [pendingGoTrueTokenRefresh, setPendingGoTrueTokenRefresh] = useState()
+
+  // Memoize the url to prevent useEffect changes since it won't change 
   const url = useMemo(() => `${_url}/.netlify/identity`, [_url])
 
-  // Coerces the user half of identityData
-  const setUser = useCallback(user => {
-    setIdentityData((prevIdentityData) => {
-      return {
-        token: prevIdentityData?.token,
-        user: user
-      }
+
+  // NOTE: The one trick at play here is for forcing a user refresh. It actually
+  // just runs a blank .update() (to which GoTrue returns the current user data),
+  // then update sets the user and queues a goTrueToken update, which effect-runs.
+
+
+  // API: Thin fetch wrapper for Authenticated Functions
+  const authorizedFetch = useCallback(async (url, options) => {
+    if (!goTrueToken) throw new Error('Cannot authorizedFetch while logged out')
+
+    return fetch(url, {
+      ...options,
+      headers: {
+        ...options?.headers,
+        'Authorization': `Bearer ${goTrueToken.access_token}`
+      },
     })
+  }, [goTrueToken])
+
+  // Thin wrapper around useState setter to inject expires_at
+  const setGoTrueToken = useCallback(goTrueToken => {
+    const expires_at = new Date(JSON.parse(urlBase64Decode(goTrueToken.access_token.split('.')[1])).exp * 1000)
+    _setGoTrueToken({ ...goTrueToken, expires_at })
   }, [])
 
-  // Define async token refresh procedure
-  const refreshToken = useCallback(async (andUser) => {
-    if (!identityData) throw new Error('Cannot refresh token when not logged in')
+  // STUB - Exclusively refreshes the goTrueToken (doesn't touch user) -- 
+  // doesn't check any expirations or anything, just goes ahead and refreshes
+  const refreshGoTrueToken = useCallback(async () => {
+    console.log('Refreshing Auth Token')
+    setGoTrueToken(await fetch(`${url}/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: `grant_type=refresh_token&refresh_token=${goTrueToken.refresh_token}`,
+    }).then(resp => resp.json()))
+  }, [setGoTrueToken, url, goTrueToken])
 
-    const now = new Date()
-    const tokenExpiresAt = new Date(identityData.token.expires_at)
+  // API: Log out current user
+  const logout = useCallback(async () => {
+    localStorage.removeItem(GO_TRUE_TOKEN_STORAGE_KEY)
+    localStorage.removeItem(USER_STORAGE_KEY)
+    _setGoTrueToken()
+    setUser()
+    if (goTrueTokenRefreshTimeoutId) clearTimeout(goTrueTokenRefreshTimeoutId)
+  }, [goTrueTokenRefreshTimeoutId])
 
-    // Refresh the token if it expires within four minutes or if we're forcing
-    // the user refresh (since the user inside the token.JWT would be new too)
-    if (andUser || (now > (tokenExpiresAt - FOUR_MINUTES))) {
-      console.log('Refreshing Auth Token')
-      const token = await fetch(`${url}/token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: `grant_type=refresh_token&refresh_token=${identityData.token.refresh_token}`,
-      }).then(resp => resp.json())
-      if (token?.error_description) {
-        // Any error refreshing the token will mean the local token is stale and
-        // won't work for Functions etc. - better to just log user out and re-auth
-        logout()
-        throw new Error(token.error_description)
-      }
-      setToken(token)
+  // Any time the goTrueToken changes, make sure it gets saved down to local
+  // storage then setup a timeout that will run 4 minutes before it expires (or
+  // now if that's sooner / expired already) to refresh it
+  useEffect(() => {
+    if (goTrueToken) {
+      localStorage.setItem(GO_TRUE_TOKEN_STORAGE_KEY, JSON.stringify(goTrueToken))
+
+      const timeToRefresh = Math.max((new Date(goTrueToken.expires_at)).getTime() - (new Date()).getTime() - FOUR_MINUTES, 0)
+      console.log(`Refresh goTrueToken in ${(timeToRefresh / 1000).toFixed(0)} seconds`)
+
+      setGoTrueTokenRefreshTimeoutId(setTimeout(
+        refreshGoTrueToken,
+        timeToRefresh
+      ))
     }
 
-    // If refreshing the user (above will have run) use the new token to get the
-    // new user details too. Using setPendingUpdate to a fake / random hash since
-    // goTrue will return the user object for _any_ update, even if nothing is
-    // updated. Could just setUser(); that would also update the in-memory user,
-    // but flashes an empty user object to the screen which is ugly.
-    if (andUser) setPendingUpdate({ a: '' })
-  }, [identityData, url])
+  }, [goTrueToken, refreshGoTrueToken])
 
-  // Any time the identityData changes, make sure it gets cloned down to
-  // localStorage and setup refreshToken polling
+  // Similarly, always make sure User is stored down to local storage
   useEffect(() => {
-    if (identityData) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(identityData))
-
-      // Configure automatic token refreshing - run refreshToken() every minute
-      refreshToken()
-      const interval = setInterval(() => refreshToken(), ONE_MINUTE)
-      return () => {
-        clearInterval(interval)
-      }
+    if (user) {
+      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user))
     }
-  }, [identityData, url, refreshToken])
+  }, [user])
 
-  // Loads identityData from LocalStorage on page load
+  // Loads user and goTrueToken from LocalStorage on page load
   useEffect(() => {
-    const identityData = localStorage.getItem(STORAGE_KEY)
-    if (identityData) {
-      setIdentityData(JSON.parse(identityData))
+    const goTrueTokenString = localStorage.getItem(GO_TRUE_TOKEN_STORAGE_KEY)
+    const userString = localStorage.getItem(USER_STORAGE_KEY)
+    if (goTrueTokenString && userString) {
+      _setGoTrueToken(JSON.parse(goTrueTokenString))
+      setUser(JSON.parse(userString))
       setProvisionalUser()
     }
   }, [])
@@ -107,7 +143,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
                 logout()
                 throw new Error('Confirmation already used')
               }
-              setToken(token)
+              setGoTrueToken(token)
             })
             .then(() => {
               setUrlToken()
@@ -123,7 +159,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
             })
           })
             .then(resp => resp.json())
-            .then(setToken)
+            .then(setGoTrueToken)
           // Explicitly not setting the urlToken to null so that a password
           // reset can occur (this just logs the user in first)
           break
@@ -132,7 +168,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
       }
     }
 
-  }, [urlToken, url])
+  }, [urlToken, url, setGoTrueToken, logout])
 
   // API: The handler for urlTokens which require the user to set a password in
   // addition to the urlToken
@@ -153,30 +189,10 @@ const useNetlifyIdentity = ({ url: _url }) => {
           password,
         })
       }).then(resp => resp.json())
-      setToken(token)
-      setPendingUpdate({ data: rest })
+      setGoTrueToken(token)
+      setPendingUpdateArgs(rest)
       setUrlToken()
     }
-  }
-
-  // API: Thin fetch wrapper for Authenticated Functions
-  const authorizedFetch = useCallback(async (url, options) => {
-    if (!identityData) throw new Error('No user set for authorized fetch')
-
-    // return refreshToken(false, token)
-    return fetch(url, {
-      ...options,
-      headers: {
-        ...options?.headers,
-        'Authorization': `Bearer ${identityData.token.access_token}`
-      },
-    })
-  }, [identityData])
-
-  // API: Log out current user
-  const logout = async () => {
-    localStorage.removeItem(STORAGE_KEY)
-    setIdentityData()
   }
 
   // API: Log in user
@@ -191,7 +207,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
     if (token?.error_description) {
       throw new Error(token.error_description)
     }
-    setToken(token)
+    setGoTrueToken(token)
   }
 
   // API: Sign up as a new user - email, password, data: { full_name: }, etc.
@@ -204,50 +220,47 @@ const useNetlifyIdentity = ({ url: _url }) => {
     setProvisionalUser(user)
   }
 
-  // API: Update user info - update({ email, password, data: { full_name: } }), etc.
-  const update = useCallback(async (props) => {
+  // API: Update user info - update({ email, password, user_metadata: { full_name: } }), etc.
+  const update = useCallback(async props => {
+    // Rename props.user_metadata to props.data per GoTrue's (odd) spec
+    delete Object.assign(props, { ['data']: props['user_metadata'] })['user_metadata']; // eslint-disable-line
+
     const user = await authorizedFetch(`${url}/user`, {
       method: 'PUT',
       body: JSON.stringify(props)
-    })
-      .then(resp => resp.json())
+    }).then(resp => resp.json())
 
+    // Set the user then refresh the token so JWT-user gets refreshed
     setUser(user)
-  }, [url, authorizedFetch, setUser])
+    setPendingGoTrueTokenRefresh(true)
+  }, [url, authorizedFetch, setUser, setPendingGoTrueTokenRefresh])
 
   // Async update - mostly applies for the invite-token workflow when saving
   // more data on a new account than just the password
   useEffect(() => {
-    if (identityData?.token && identityData?.user && pendingUpdate) {
-      update(pendingUpdate)
-      setPendingUpdate()
+    if (goTrueToken && user && pendingUpdateArgs) {
+      update(pendingUpdateArgs)
+      setPendingUpdateArgs()
     }
-  }, [identityData, pendingUpdate, update])
+  }, [goTrueToken, user, pendingUpdateArgs, update])
 
   // Token and User dependent since user needs to be logged in to run email_change
   useEffect(() => {
-    if (urlToken && urlToken.type === 'email_change' && identityData) {
+    if (urlToken && urlToken.type === 'email_change' && user) {
       console.log('Confirming Email Change')
       update({ email_change_token: urlToken.token })
         .then(() => setUrlToken())
     }
-  }, [urlToken, identityData, update])
+  }, [urlToken, user, update])
 
-  // API: A forced data refresh for if the User changes externally (from Function
-  // or otherwise)
-  const refreshUser = useCallback(async () => {
-    refreshToken(true)
-  }, [refreshToken])
-
-  // When logging in all we set is the token; if there's no identityData.user,
-  // this effect should go grab it
+  // Set the token when logging in; effect will grab user details
   useEffect(() => {
-    if (identityData?.token && !identityData?.user) {
+    if (goTrueToken && !user) {
       authorizedFetch(`${url}/user`)
         .then(resp => resp.json())
         .then(user => setUser(user))
     }
-  }, [url, identityData, authorizedFetch, setUser])
+  }, [url, goTrueToken, user, authorizedFetch, setUser])
 
   // API: Requests a password recovery email for the specified email-user
   const sendPasswordRecovery = async ({ email }) => {
@@ -257,31 +270,25 @@ const useNetlifyIdentity = ({ url: _url }) => {
     })
   }
 
-  // Coerces the token half of identityData (and adds expires_at)
-  const setToken = (token) => {
-    const expires_at = new Date(JSON.parse(urlBase64Decode(token.access_token.split('.')[1])).exp * 1000)
-    setIdentityData((prevIdentityData) => {
-      return {
-        user: prevIdentityData?.user,
-        token: {
-          ...token,
-          expires_at
-        }
-      }
-    })
-  }
-
+  // Catches the pendingTokenRefresh flag and runs the token refresh function
+  useEffect(() => {
+    if (goTrueToken && pendingGoTrueTokenRefresh) {
+      clearTimeout(goTrueTokenRefreshTimeoutId)
+      refreshGoTrueToken()
+      setPendingGoTrueTokenRefresh()
+    }
+  }, [goTrueToken, pendingGoTrueTokenRefresh, refreshGoTrueToken, goTrueTokenRefreshTimeoutId])
 
   return {
+    user,
     login,
     logout,
     update,
     signup,
     urlToken,
-    refreshUser,
+    refreshUser: update,
     authorizedFetch,
     provisionalUser,
-    user: identityData?.user,
     sendPasswordRecovery,
     completeUrlTokenTwoStep,
   }
