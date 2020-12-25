@@ -150,25 +150,33 @@ const useNetlifyIdentity = ({ url: _url }) => {
             })
           break
         case 'recovery':
-          console.log('Recovering User')
-          fetch(`${url}/verify`, {
-            method: 'POST',
-            body: JSON.stringify({
-              token: urlToken.token,
-              type: 'recovery'
+          if (!goTrueToken) {
+            console.log('Recovering User')
+            fetch(`${url}/verify`, {
+              method: 'POST',
+              body: JSON.stringify({
+                token: urlToken.token,
+                type: 'recovery'
+              })
             })
-          })
-            .then(resp => resp.json())
-            .then(setGoTrueToken)
-          // Explicitly not setting the urlToken to null so that a password
-          // reset can occur (this just logs the user in first)
+              .then(resp => resp.json())
+              .then(setGoTrueToken)
+            // Explicitly not setting the urlToken to null so that a password
+            // reset can occur (this just logs the user in first)
+          }
+          else {
+            // Could be reachable in a fringe case - if a user clicks a link
+            // to recover their account on a computer that's already logged in
+            // to a different account? Hopefully this covers it. 
+            logout()
+          }
           break
         default:
           return
       }
     }
 
-  }, [urlToken, url, setGoTrueToken, logout])
+  }, [urlToken, url, setGoTrueToken, goTrueToken, logout])
 
   // API: The handler for urlTokens which require the user to set a password in
   // addition to the urlToken
