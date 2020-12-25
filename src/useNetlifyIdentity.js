@@ -56,7 +56,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
 
   // Thin wrapper around useState setter to inject expires_at
   const setGoTrueToken = useCallback(goTrueToken => {
-    const expires_at = new Date(JSON.parse(urlBase64Decode(goTrueToken.access_token.split('.')[1])).exp * 1000)
+    const expires_at = new Date(JSON.parse(window.atob(goTrueToken.access_token.split('.')[1])).exp * 1000)
     _setGoTrueToken({ ...goTrueToken, expires_at })
   }, [])
 
@@ -291,30 +291,6 @@ const useNetlifyIdentity = ({ url: _url }) => {
     provisionalUser,
     sendPasswordRecovery,
     completeUrlTokenTwoStep,
-  }
-}
-
-function urlBase64Decode(str) {
-  // From https://jwt.io/js/jwt.js
-  var output = str.replace(/-/g, '+').replace(/_/g, '/');
-  let cleaned
-  switch (output.length % 4) {
-    case 0:
-      cleaned = output
-    case 2:
-      cleaned = `${output}==`
-      break;
-    case 3:
-      cleaned = `${output}=`
-      break;
-    default:
-      throw new Error('Illegal base64url string!')
-  }
-  var result = window.atob(cleaned); //polifyll https://github.com/davidchambers/Base64.js
-  try {
-    return decodeURIComponent(escape(result));
-  } catch (err) {
-    return result;
   }
 }
 
