@@ -74,11 +74,15 @@ const useNetlifyIdentity = ({ url: _url }) => {
 
   // API: Log out current user
   const logout = useCallback(async () => {
+    console.log('Logging Out')
     localStorage.removeItem(GO_TRUE_TOKEN_STORAGE_KEY)
     localStorage.removeItem(USER_STORAGE_KEY)
     _setGoTrueToken()
     setUser()
-    if (goTrueTokenRefreshTimeoutId) clearTimeout(goTrueTokenRefreshTimeoutId)
+    if (goTrueTokenRefreshTimeoutId) {
+      clearTimeout(goTrueTokenRefreshTimeoutId)
+      setGoTrueTokenRefreshTimeoutId()
+    }
   }, [goTrueTokenRefreshTimeoutId])
 
   // Any time the goTrueToken changes, make sure it gets saved down to local
@@ -122,66 +126,68 @@ const useNetlifyIdentity = ({ url: _url }) => {
     setUrlToken(parseTokenFromLocation())
   }, [])
 
-  // urlToken-dependent only
+  // Handle automatic token steps
   useEffect(() => {
-    if (urlToken) {
-      switch (urlToken.type) {
-        case 'confirmation':
-          // TODO: Handle failure case (clicked again)
-          console.log('Confirming User')
-          fetch(`${url}/verify`, {
-            method: 'POST',
-            body: JSON.stringify({
-              token: urlToken.token,
-              type: 'signup'
-            })
-          })
-            .then(resp => resp.json())
-            .then(token => {
-              // Confirmation email clicked second time+
-              if (token.code === "404") {
-                logout()
-                throw new Error('Confirmation already used')
-              }
-              setGoTrueToken(token)
-            })
-            .then(() => {
-              setUrlToken()
-            })
-          break
-        case 'recovery':
-          if (!goTrueToken) {
-            console.log('Recovering User')
-            fetch(`${url}/verify`, {
-              method: 'POST',
-              body: JSON.stringify({
-                token: urlToken.token,
-                type: 'recovery'
-              })
-            })
-              .then(resp => resp.json())
-              .then(setGoTrueToken)
-            // Explicitly not setting the urlToken to null so that a password
-            // reset can occur (this just logs the user in first)
+    // To avoid setTimeout mishaps and other fringe errors, ensure that no user
+    // is currently logged in before running most token actions
+    if (
+      (
+        urlToken?.type === 'confirmation' ||
+        urlToken?.type === 'recovery' ||
+        urlToken?.type === 'invite'
+      ) && goTrueToken) {
+      logout()
+    }
+    else if (urlToken?.type === 'confirmation') {
+      console.log('Confirming User')
+      fetch(`${url}/verify`, {
+        method: 'POST',
+        body: JSON.stringify({
+          token: urlToken.token,
+          type: 'signup'
+        })
+      })
+        .then(resp => resp.json())
+        .then(token => {
+          // Confirmation email previously consumed by server / no longer valid
+          if (token.code === 404) {
+            console.log("Confirmation token attempted that's already been consumed; logging out")
+            setUrlToken()
           }
           else {
-            // Could be reachable in a fringe case - if a user clicks a link
-            // to recover their account on a computer that's already logged in
-            // to a different account? Hopefully this covers it. 
-            logout()
+            setUrlToken()
+            setGoTrueToken(token)
           }
-          break
-        default:
-          return
-      }
+        })
     }
-
-  }, [urlToken, url, setGoTrueToken, goTrueToken, logout])
+    else if (urlToken?.type === 'recovery') {
+      console.log('Recovering User')
+      fetch(`${url}/verify`, {
+        method: 'POST',
+        body: JSON.stringify({
+          token: urlToken.token,
+          type: 'recovery'
+        })
+      })
+        .then(resp => resp.json())
+        .then(token => {
+          // Recovery email previously consumed by server / no longer valid
+          if (token.code === 404) {
+            console.log("Recovery token attempted that's already been consumed; logging out")
+            setUrlToken()
+          }
+          else {
+            setGoTrueToken(token)
+            setUrlToken({ type: 'passwordRecovery' })
+          }
+        })
+    }
+  }, [url, setGoTrueToken, setUrlToken, goTrueToken, logout, urlToken])
 
   // API: The handler for urlTokens which require the user to set a password in
   // addition to the urlToken
   const completeUrlTokenTwoStep = async ({ password, ...rest }) => {
-    if (urlToken?.type === 'recovery') {
+    if (urlToken?.type === 'passwordRecovery') {
       console.log('Updating Password & Clearing URL Token')
       setPendingUpdateArgs({ password })
       setUrlToken()
@@ -194,12 +200,12 @@ const useNetlifyIdentity = ({ url: _url }) => {
         body: JSON.stringify({
           token: urlToken.token,
           type: 'signup',
-          password,
+          password
         })
       }).then(resp => resp.json())
+      setUrlToken()
       setGoTrueToken(token)
       setPendingUpdateArgs(rest)
-      setUrlToken()
     }
   }
 
@@ -268,7 +274,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
         .then(resp => resp.json())
         .then(user => setUser(user))
     }
-  }, [url, goTrueToken, user, authorizedFetch, setUser])
+  }, [url, setUser, authorizedFetch, goTrueToken, user])
 
   // API: Requests a password recovery email for the specified email-user
   const sendPasswordRecovery = async ({ email }) => {
@@ -287,6 +293,10 @@ const useNetlifyIdentity = ({ url: _url }) => {
     }
   }, [goTrueToken, pendingGoTrueTokenRefresh, refreshGoTrueToken, goTrueTokenRefreshTimeoutId])
 
+  const pendingEmailUpdate = useCallback(() => {
+    return (user?.email !== user?.new_email) && user?.new_email
+  }, [user])
+
   return {
     user,
     login,
@@ -297,6 +307,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
     refreshUser: update,
     authorizedFetch,
     provisionalUser,
+    pendingEmailUpdate,
     sendPasswordRecovery,
     completeUrlTokenTwoStep,
   }
