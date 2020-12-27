@@ -293,7 +293,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
     }
   }, [goTrueToken, pendingGoTrueTokenRefresh, refreshGoTrueToken, goTrueTokenRefreshTimeoutId])
 
-  const pendingEmailUpdate = useCallback(() => {
+  const pendingEmailUpdate = useMemo(() => {
     return (user?.email !== user?.new_email) && user?.new_email
   }, [user])
 
