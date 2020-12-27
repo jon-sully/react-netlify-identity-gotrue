@@ -227,6 +227,9 @@ const useNetlifyIdentity = ({ url: _url }) => {
   // API: Sign up as a new user - email, password, data: { full_name: }, etc.
   // Sets the provisional user for visibility's sake
   const signup = async (props) => {
+    // Rename props.user_metadata to props.data per GoTrue's (odd) spec
+    delete Object.assign(props, { ['data']: props['user_metadata'] })['user_metadata']; // eslint-disable-line
+
     const response = await fetch(`${url}/signup`, {
       method: 'POST',
       body: JSON.stringify(props)
