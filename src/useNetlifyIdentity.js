@@ -227,11 +227,22 @@ const useNetlifyIdentity = ({ url: _url }) => {
   // API: Sign up as a new user - email, password, data: { full_name: }, etc.
   // Sets the provisional user for visibility's sake
   const signup = async (props) => {
-    const user = await fetch(`${url}/signup`, {
+    const response = await fetch(`${url}/signup`, {
       method: 'POST',
       body: JSON.stringify(props)
     }).then(resp => resp.json())
-    setProvisionalUser(user)
+
+    if (response?.msg) {
+      throw new Error(response.msg)
+    }
+    // Support auto-confirm if enabled for site; log user in immediately
+    // to begin authenticated session and token cycle
+    if (response?.confirmed_at) {
+      await login(props)
+    }
+    else {
+      setProvisionalUser(response)
+    }
   }
 
   // API: Update user info - update({ email, password, user_metadata: { full_name: } }), etc.
