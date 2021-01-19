@@ -177,8 +177,8 @@ const useNetlifyIdentity = ({ url: _url }) => {
             setUrlToken()
           }
           else {
-            setGoTrueToken(token)
             setUrlToken({ type: 'passwordRecovery' })
+            setGoTrueToken(token)
           }
         })
     }
