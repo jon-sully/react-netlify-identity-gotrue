@@ -1,6 +1,6 @@
 {
   "name": "react-netlify-identity-gotrue",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "A pure React (hooks-based) API to Netlify Identity / GoTrue, fully implementing all auth workflows",
   "main": "./build/index.js",
   "repository": "https://github.com/jon-sully/react-netlify-identity-gotrue",
