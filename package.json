@@ -16,8 +16,8 @@
     "prepare": "webpack"
   },
   "peerDependencies": {
-    "react": "^16.13.1",
-    "react-dom": "^16.13.1"
+    "react": "^16.13.1 || ^17.0.0",
+    "react-dom": "^16.13.1 || ^17.0.0"
   },
   "devDependencies": {
     "@babel/core": "^7.7.5",
