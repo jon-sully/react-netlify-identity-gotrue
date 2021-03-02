@@ -253,13 +253,17 @@ const useNetlifyIdentity = ({ url: _url }) => {
     // Rename props.user_metadata to props.data per GoTrue's (odd) spec
     delete Object.assign(props, { ['data']: props['user_metadata'] })['user_metadata']; // eslint-disable-line
 
-    const user = await authorizedFetch(`${url}/user`, {
+    const response = await authorizedFetch(`${url}/user`, {
       method: 'PUT',
       body: JSON.stringify(props)
     }).then(resp => resp.json())
 
+    if (response?.msg) {
+      throw new Error(response.msg)
+    }
+
     // Set the user then refresh the token so JWT-user gets refreshed
-    setUser(user)
+    setUser(response)
     setPendingGoTrueTokenRefresh(true)
   }, [url, authorizedFetch, setUser, setPendingGoTrueTokenRefresh])
 
