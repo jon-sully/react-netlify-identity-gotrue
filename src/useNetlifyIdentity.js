@@ -328,6 +328,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
     pendingEmailUpdate,
     sendPasswordRecovery,
     completeUrlTokenTwoStep,
+    goTrueToken
   }
 }
 
