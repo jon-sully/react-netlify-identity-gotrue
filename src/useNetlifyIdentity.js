@@ -138,6 +138,14 @@ const useNetlifyIdentity = ({ url: _url }) => {
       ) && goTrueToken) {
       logout()
     }
+    else if (urlToken?.type === 'access') {
+      const token = {};
+      urlToken.split("&").forEach((pair) => {
+        const [key, value] = pair.split("=");
+        token[key] = value;
+      });
+      setGoTrueToken(token)
+    }
     else if (urlToken?.type === 'confirmation') {
       console.log('Confirming User')
       fetch(`${url}/verify`, {
