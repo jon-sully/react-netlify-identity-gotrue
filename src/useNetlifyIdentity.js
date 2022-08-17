@@ -322,6 +322,7 @@ const useNetlifyIdentity = ({ url: _url }) => {
     update,
     signup,
     urlToken,
+    goTrueToken,
     refreshUser: update,
     authorizedFetch,
     provisionalUser,
